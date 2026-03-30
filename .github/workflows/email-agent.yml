@@ -1,0 +1,29 @@
+name: かりや生協 AIエージェント
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'  # 10分ごとに実行
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  check-email:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python環境をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: ライブラリをインストール
+        run: pip install -r requirements.txt
+
+      - name: メールエージェントを実行
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python main.py

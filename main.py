@@ -151,12 +151,9 @@ def check_and_reply():
 def main():
     print("かりや生協 AIエージェント 起動")
     print(f"メールアカウント: {GMAIL_ADDRESS}")
-
-    while True:
-        print("メール確認中...")
-        check_and_reply()
-        print("5分後に再確認します\n")
-        time.sleep(300)
+    print("メール確認中...")
+    check_and_reply()
+    print("完了")
 
 
 if __name__ == "__main__":
