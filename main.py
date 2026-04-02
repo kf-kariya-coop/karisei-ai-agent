@@ -91,7 +91,7 @@ def handle_email_registration(sender_email, sender_name, body):
 かりや生協 AIスタッフ""")
         return
 
-    staff_code = match.group(1)
+    staff_code = int(match.group(1))
 
     # 職員マスタに存在するか確認
     master = supabase.table("staff_master").select("name").eq("staff_code", staff_code).execute()
