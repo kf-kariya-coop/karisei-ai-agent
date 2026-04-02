@@ -6,6 +6,8 @@ from email.mime.multipart import MIMEMultipart
 from email.header import decode_header
 import re
 import os
+import csv
+import io
 from datetime import date, timedelta
 from openai import OpenAI
 from supabase import create_client
@@ -66,6 +68,115 @@ def send_email(to_address, subject, body):
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
         server.sendmail(GMAIL_ADDRESS, to_address, msg.as_string())
+
+
+def get_csv_attachment(msg):
+    """メールからCSV添付ファイルを取得する"""
+    for part in msg.walk():
+        if part.get_content_disposition() == "attachment":
+            filename = part.get_filename()
+            if filename and filename.lower().endswith(".csv"):
+                payload = part.get_payload(decode=True)
+                # 文字コードを自動判定（UTF-8またはShift-JIS）
+                for encoding in ["utf-8-sig", "shift-jis", "utf-8"]:
+                    try:
+                        return payload.decode(encoding)
+                    except Exception:
+                        continue
+    return None
+
+
+def handle_staff_master_import(sender_email, csv_content):
+    """職員マスタCSVをインポートする"""
+    try:
+        reader = csv.reader(io.StringIO(csv_content))
+        rows = list(reader)
+
+        if not rows:
+            send_email(sender_email, "【かりや生協】職員マスタ更新 - エラー",
+                "CSVファイルが空です。確認してください。\n\nかりや生協 AIスタッフ")
+            return
+
+        # 1行目がヘッダーかデータか判定
+        first_row = rows[0]
+        start_index = 1 if any(h in first_row for h in ["所属", "社員CD", "氏名"]) else 0
+
+        inserted = 0
+        updated = 0
+        errors = 0
+        new_staff_codes = []
+
+        for row in rows[start_index:]:
+            if len(row) < 9:
+                continue
+            try:
+                # 列マッピング：A=所属, B=組織, C=所属部, D=所属課, E=職場名, F=社員CD, G=氏名, H=フリガナ, I=役職名
+                staff_code_raw = row[5].strip()
+                if not staff_code_raw or not staff_code_raw.isdigit():
+                    continue
+
+                staff_code = int(staff_code_raw)
+                new_staff_codes.append(staff_code)
+
+                data = {
+                    "staff_code": staff_code,
+                    "workplace_code": row[1].strip() if row[1].strip().isdigit() else None,
+                    "department": row[2].strip(),
+                    "section": row[3].strip(),
+                    "workplace_name": row[4].strip(),
+                    "name": row[6].strip(),
+                    "name_kana": row[7].strip(),
+                    "position_title": row[8].strip(),
+                    "is_active": True,
+                    "updated_at": date.today().isoformat()
+                }
+
+                # workplace_codeを整数に変換
+                if data["workplace_code"]:
+                    data["workplace_code"] = int(data["workplace_code"])
+
+                existing = supabase.table("staff_master").select("staff_code").eq("staff_code", staff_code).execute()
+                if existing.data:
+                    supabase.table("staff_master").update(data).eq("staff_code", staff_code).execute()
+                    updated += 1
+                else:
+                    supabase.table("staff_master").insert(data).execute()
+                    inserted += 1
+
+            except Exception as e:
+                errors += 1
+                print(f"行のインポートエラー：{row} / {e}")
+
+        # マスタにない職員をis_active=Falseに更新（退職者）
+        if new_staff_codes:
+            all_staff = supabase.table("staff_master").select("staff_code").eq("is_active", True).execute()
+            deactivated = 0
+            for s in all_staff.data:
+                if s["staff_code"] not in new_staff_codes:
+                    supabase.table("staff_master").update({
+                        "is_active": False,
+                        "updated_at": date.today().isoformat()
+                    }).eq("staff_code", s["staff_code"]).execute()
+                    deactivated += 1
+
+        send_email(sender_email, "【かりや生協】職員マスタ更新 完了",
+            f"""職員マスタの更新が完了しました。
+
+　新規登録：{inserted}名
+　更新：{updated}名
+　退職・無効化：{deactivated}名
+　エラー：{errors}件
+
+更新日：{date.today().strftime('%Y年%m月%d日')}
+
+かりや生協 AIスタッフ""")
+
+        print(f"職員マスタインポート完了：新規{inserted}名、更新{updated}名、無効化{deactivated}名")
+
+    except Exception as e:
+        send_email(sender_email, "【かりや生協】職員マスタ更新 - エラー",
+            f"インポート中にエラーが発生しました。\n\nエラー内容：{e}\n\nかりや生協 AIスタッフ")
+        print(f"職員マスタインポートエラー：{e}")
 
 
 def handle_email_registration(sender_email, sender_name, body):
@@ -286,6 +397,16 @@ def check_and_reply():
 
             if sender_email == GMAIL_ADDRESS:
                 print("自分自身からのメールのためスキップ")
+                continue
+
+            # 職員マスタ更新
+            if "職員マスタ更新" in subject:
+                csv_content = get_csv_attachment(msg)
+                if csv_content:
+                    handle_staff_master_import(sender_email, csv_content)
+                else:
+                    send_email(sender_email, "【かりや生協】職員マスタ更新 - CSVが見つかりません",
+                        "CSVファイルが添付されていません。\nCSVファイルを添付して再送してください。\n\nかりや生協 AIスタッフ")
                 continue
 
             # メールアドレス登録
