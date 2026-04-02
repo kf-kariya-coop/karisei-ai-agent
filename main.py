@@ -170,6 +170,7 @@ def handle_staff_master_import(sender_email, csv_content):
                 print(f"行のインポートエラー：{row} / {e}")
 
         # マスタにない職員をis_active=Falseに更新（退職者）
+        deactivated = 0
         if new_staff_codes:
             all_staff = supabase.table("staff_master").select("staff_code").eq("is_active", True).execute()
             deactivated = 0
