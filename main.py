@@ -73,16 +73,38 @@ def send_email(to_address, subject, body):
 def get_csv_attachment(msg):
     """メールからCSV添付ファイルを取得する"""
     for part in msg.walk():
-        if part.get_content_disposition() == "attachment":
-            filename = part.get_filename()
-            if filename and filename.lower().endswith(".csv"):
-                payload = part.get_payload(decode=True)
-                # 文字コードを自動判定（UTF-8またはShift-JIS）
-                for encoding in ["utf-8-sig", "shift-jis", "utf-8"]:
-                    try:
-                        return payload.decode(encoding)
-                    except Exception:
-                        continue
+        content_disposition = part.get("Content-Disposition", "")
+        content_type = part.get_content_type()
+
+        # 添付ファイルかCSVタイプのパートを対象にする
+        is_attachment = "attachment" in content_disposition
+        is_csv_type = content_type in ("text/csv", "text/plain", "application/octet-stream", "application/vnd.ms-excel")
+
+        if not (is_attachment or is_csv_type):
+            continue
+
+        # ファイル名を取得（エンコードされている場合もデコード）
+        raw_filename = part.get_filename()
+        if raw_filename:
+            filename = decode_str(raw_filename)
+        else:
+            filename = ""
+
+        # CSV拡張子チェック（拡張子がない場合も試みる）
+        if filename and not filename.lower().endswith(".csv"):
+            continue
+
+        payload = part.get_payload(decode=True)
+        if not payload:
+            continue
+
+        # 文字コードを自動判定（UTF-8またはShift-JIS）
+        for encoding in ["utf-8-sig", "shift-jis", "cp932", "utf-8"]:
+            try:
+                return payload.decode(encoding)
+            except Exception:
+                continue
+
     return None
 
 
