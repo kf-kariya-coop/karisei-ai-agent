@@ -116,14 +116,10 @@ def handle_staff_master_import(sender_email, csv_content):
             return
 
         print(f"CSVの行数：{len(rows)}")
-        print(f"1行目：{rows[0]}")
-        if len(rows) > 1:
-            print(f"2行目：{rows[1]}")
 
         # 1行目がヘッダーかデータか判定
         first_row = rows[0]
         start_index = 1 if any(h in first_row for h in ["所属", "社員CD", "氏名"]) else 0
-        print(f"データ開始行：{start_index}")
 
         inserted = 0
         updated = 0
