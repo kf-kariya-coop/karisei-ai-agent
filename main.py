@@ -74,23 +74,17 @@ def get_csv_attachment(msg):
     """メールからCSV添付ファイルを取得する"""
     for part in msg.walk():
         content_disposition = part.get("Content-Disposition", "")
-        content_type = part.get_content_type()
 
-        # 添付ファイルかCSVタイプのパートを対象にする
-        is_attachment = "attachment" in content_disposition
-        is_csv_type = content_type in ("text/csv", "text/plain", "application/octet-stream", "application/vnd.ms-excel")
-
-        if not (is_attachment or is_csv_type):
+        # 添付ファイルのみを対象（メール本文は除外）
+        if "attachment" not in content_disposition:
             continue
 
         # ファイル名を取得（エンコードされている場合もデコード）
         raw_filename = part.get_filename()
-        if raw_filename:
-            filename = decode_str(raw_filename)
-        else:
-            filename = ""
+        filename = decode_str(raw_filename) if raw_filename else ""
+        print(f"添付ファイル検出：{filename}")
 
-        # CSV拡張子チェック（拡張子がない場合も試みる）
+        # CSV以外は除外
         if filename and not filename.lower().endswith(".csv"):
             continue
 
@@ -98,10 +92,12 @@ def get_csv_attachment(msg):
         if not payload:
             continue
 
-        # 文字コードを自動判定（UTF-8またはShift-JIS）
+        # 文字コードを自動判定
         for encoding in ["utf-8-sig", "shift-jis", "cp932", "utf-8"]:
             try:
-                return payload.decode(encoding)
+                content = payload.decode(encoding)
+                if content.strip():
+                    return content
             except Exception:
                 continue
 
