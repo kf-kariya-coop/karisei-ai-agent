@@ -200,6 +200,99 @@ def handle_staff_master_import(sender_email, csv_content):
         print(f"職員マスタインポートエラー：{e}")
 
 
+def handle_license_import(sender_email, csv_content):
+    """免許証データCSVをインポートする"""
+    try:
+        reader = csv.reader(io.StringIO(csv_content))
+        rows = list(reader)
+
+        if not rows:
+            send_email(sender_email, "【かりや生協】免許証データ更新 - エラー",
+                "CSVファイルが空です。確認してください。\n\nかりや生協 AIスタッフ")
+            return
+
+        print(f"免許証CSVの行数：{len(rows)}")
+
+        # 1行目がヘッダーか判定
+        first_row = rows[0]
+        start_index = 1 if any(h in first_row for h in ["社員No", "社員CD", "職員コード", "有効期限"]) else 0
+
+        inserted = 0
+        updated = 0
+        skipped = 0
+        errors = 0
+
+        for row in rows[start_index:]:
+            if len(row) < 2:
+                continue
+            try:
+                # 社員No（列1）と有効期限（列5）を取得
+                # フォーマット：所属名, 社員No, 氏名, 氏名カナ, 役職名, 有効期限
+                staff_code_raw = str(row[1]).strip()
+                if not staff_code_raw or not staff_code_raw.isdigit():
+                    skipped += 1
+                    continue
+
+                staff_code = int(staff_code_raw)
+
+                # 有効期限を取得（列5、なければ列1の次）
+                expiry_raw = row[5].strip() if len(row) > 5 else ""
+                if not expiry_raw:
+                    skipped += 1
+                    continue
+
+                # 日付を解析（各種フォーマット対応）
+                expiry_date = None
+                for fmt in ["%Y/%m/%d", "%Y-%m-%d", "%Y年%m月%d日", "%Y/%m/%d %H:%M:%S"]:
+                    try:
+                        from datetime import datetime as dt
+                        expiry_date = dt.strptime(expiry_raw.split(" ")[0], fmt).date()
+                        break
+                    except Exception:
+                        continue
+
+                if not expiry_date:
+                    skipped += 1
+                    continue
+
+                data = {
+                    "staff_code": staff_code,
+                    "license_expiry_date": expiry_date.isoformat(),
+                    "updated_at": date.today().isoformat()
+                }
+
+                existing = supabase.table("license_management").select("staff_code").eq("staff_code", staff_code).execute()
+                if existing.data:
+                    supabase.table("license_management").update(data).eq("staff_code", staff_code).execute()
+                    updated += 1
+                else:
+                    supabase.table("license_management").insert(data).execute()
+                    inserted += 1
+
+            except Exception as e:
+                errors += 1
+                print(f"免許証データ行エラー：{e}")
+
+        send_email(sender_email, "【かりや生協】免許証データ更新 完了",
+            f"""免許証データの更新が完了しました。
+
+　新規登録：{inserted}名
+　更新：{updated}名
+　スキップ：{skipped}件（空欄・ヘッダー等）
+　エラー：{errors}件
+
+更新日：{date.today().strftime('%Y年%m月%d日')}
+
+かりや生協 AIスタッフ""")
+
+        print(f"免許証インポート完了：新規{inserted}名、更新{updated}名")
+
+    except Exception as e:
+        send_email(sender_email, "【かりや生協】免許証データ更新 - エラー",
+            f"インポート中にエラーが発生しました。\n\nエラー内容：{e}\n\nかりや生協 AIスタッフ")
+        print(f"免許証インポートエラー：{e}")
+
+
 def handle_email_registration(sender_email, sender_name, body):
     """メールアドレス登録処理"""
     # 職員コードを本文から抽出
@@ -418,6 +511,16 @@ def check_and_reply():
 
             if sender_email == GMAIL_ADDRESS:
                 print("自分自身からのメールのためスキップ")
+                continue
+
+            # 免許証データ更新
+            if "免許証データ更新" in subject:
+                csv_content = get_csv_attachment(msg)
+                if csv_content:
+                    handle_license_import(sender_email, csv_content)
+                else:
+                    send_email(sender_email, "【かりや生協】免許証データ更新 - CSVが見つかりません",
+                        "CSVファイルが添付されていません。\nCSVファイルを添付して再送してください。\n\nかりや生協 AIスタッフ")
                 continue
 
             # 職員マスタ更新
