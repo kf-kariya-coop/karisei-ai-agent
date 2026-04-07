@@ -808,7 +808,11 @@ def check_and_reply():
 
             # 通常のメール返信
             reply_body = generate_reply(sender_name, subject, body)
-            send_email(sender_email, f"Re: {subject}" if not subject.startswith("Re:") else subject, reply_body)
+            # 元のメッセージを引用して追記
+            quoted = f"\n\n---\n{sender_name} さんのメール：\n"
+            for line in body.strip().splitlines():
+                quoted += f"> {line}\n"
+            send_email(sender_email, f"Re: {subject}" if not subject.startswith("Re:") else subject, reply_body + quoted)
             print(f"返信送信完了: {sender_email}")
 
         mail.logout()
