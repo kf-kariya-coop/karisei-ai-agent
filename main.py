@@ -560,17 +560,20 @@ def send_license_reminders():
 def search_regulations(query, limit=3):
     """就業規則等から関連する条文を検索する"""
     try:
+        print(f"規定検索開始：{query[:50]}")
         response = client.embeddings.create(
             model="text-embedding-3-small",
             input=query
         )
         query_embedding = response.data[0].embedding
+        print(f"埋め込みベクトル生成完了")
 
         result = supabase.rpc("match_regulations", {
             "query_embedding": query_embedding,
             "match_count": limit
         }).execute()
 
+        print(f"検索結果：{len(result.data)}件")
         if result.data:
             return result.data
     except Exception as e:
