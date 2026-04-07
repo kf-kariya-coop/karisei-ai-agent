@@ -557,12 +557,46 @@ def send_license_reminders():
         print(f"免許更新チェックエラー：{e}")
 
 
+def search_regulations(query, limit=3):
+    """就業規則等から関連する条文を検索する"""
+    try:
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=query
+        )
+        query_embedding = response.data[0].embedding
+
+        result = supabase.rpc("match_regulations", {
+            "query_embedding": query_embedding,
+            "match_count": limit
+        }).execute()
+
+        if result.data:
+            return result.data
+    except Exception as e:
+        print(f"規定検索エラー：{e}")
+    return []
+
+
 def generate_reply(sender_name, subject, body):
+    # 就業規則等に関連する質問か判定して検索
+    regulation_keywords = ["就業規則", "休暇", "有給", "給与", "残業", "休憩", "労働時間",
+                          "懲戒", "退職", "育休", "産休", "規則", "規程", "規定"]
+    needs_rag = any(kw in body or kw in subject for kw in regulation_keywords)
+
+    context = ""
+    if needs_rag:
+        results = search_regulations(body)
+        if results:
+            context = "\n\n【参考：就業規則等の関連条文】\n"
+            for r in results:
+                context += f"\n＜{r['doc_name']}＞\n{r['content']}\n"
+
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"送信者：{sender_name}\n件名：{subject}\n\n本文：\n{body}"}
+            {"role": "user", "content": f"送信者：{sender_name}\n件名：{subject}\n\n本文：\n{body}{context}"}
         ]
     )
     return response.choices[0].message.content
