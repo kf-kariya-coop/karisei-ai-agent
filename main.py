@@ -59,16 +59,27 @@ def get_email_body(msg):
     if msg.is_multipart():
         for part in msg.walk():
             if part.get_content_type() == "text/plain":
+                payload = part.get_payload(decode=True)
+                if payload:
+                    charset = part.get_content_charset() or "iso-2022-jp"
+                    for encoding in [charset, "iso-2022-jp", "utf-8", "shift-jis", "cp932"]:
+                        try:
+                            body = payload.decode(encoding)
+                            break
+                        except Exception:
+                            continue
+                if body:
+                    break
+    else:
+        payload = msg.get_payload(decode=True)
+        if payload:
+            charset = msg.get_content_charset() or "iso-2022-jp"
+            for encoding in [charset, "iso-2022-jp", "utf-8", "shift-jis", "cp932"]:
                 try:
-                    body = part.get_payload(decode=True).decode("utf-8", errors="replace")
+                    body = payload.decode(encoding)
                     break
                 except Exception:
-                    pass
-    else:
-        try:
-            body = msg.get_payload(decode=True).decode("utf-8", errors="replace")
-        except Exception:
-            pass
+                    continue
     return body
 
 
