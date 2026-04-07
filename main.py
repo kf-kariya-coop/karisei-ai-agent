@@ -585,6 +585,8 @@ def search_regulations(query, limit=3):
         }).execute()
 
         print(f"検索結果：{len(result.data)}件")
+        for i, r in enumerate(result.data):
+            print(f"  [{i+1}] {r['doc_name']} chunk{r.get('chunk_index','?')} (sim:{r.get('similarity',0):.3f}): {r['content'][:80]}")
         if result.data:
             return result.data
     except Exception as e:
@@ -598,30 +600,31 @@ def generate_reply(sender_name, subject, body):
                           "懲戒", "退職", "育休", "産休", "規則", "規程", "規定"]
     needs_rag = any(kw in body or kw in subject for kw in regulation_keywords)
 
-    context = ""
-    rag_instruction = ""
+    system_content = SYSTEM_PROMPT
+
     if needs_rag:
         # 本文が文字化けしている場合は件名を優先して検索
-        is_garbled = body and not any('\u3000' <= c <= '\u9fff' for c in body[:100])
+        is_garbled = body and not any('\u3040' <= c <= '\u9fff' for c in body[:100])
         search_query = subject if is_garbled else f"{subject} {body}"
         print(f"検索クエリ：{search_query[:80]}")
         results = search_regulations(search_query, limit=5)
         if results:
-            context = "\n\n【参照：就業規則等の関連条文（データベースより取得）】\n"
+            context = "\n\n【以下は就業規則データベースから検索した関連条文です。必ずこの内容を根拠として回答してください】\n"
             for r in results:
                 context += f"\n＜出典：{r['doc_name']}＞\n{r['content']}\n"
-            rag_instruction = """
-【重要な回答ルール】
-上記の「参照：就業規則等の関連条文」を必ず参照して回答してください。
-・条文の内容を具体的に引用し、「○○就業規則 第○条」のように出典を明記してください
-・条文に記載されていない内容は「就業規則には記載がありません」と答え、推測で回答しないでください
-・「一般的には」「通常は」などの曖昧な表現は使わないでください"""
+            context += """
+【回答ルール（厳守）】
+・上記の条文を根拠として具体的に回答してください
+・「〇〇就業規則 第〇条」のように出典と条番号を明記してください（条番号が含まれている場合）
+・上記の条文に記載がない内容は「就業規則には明記されていません」と回答し、推測や一般論は述べないでください
+・「一般的には」「通常は」「労働基準法では」などの表現は禁止です。必ず規定の条文を引用してください"""
+            system_content = SYSTEM_PROMPT + context
 
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT + rag_instruction},
-            {"role": "user", "content": f"送信者：{sender_name}\n件名：{subject}\n\n本文：\n{body}{context}"}
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": f"送信者：{sender_name}\n件名：{subject}\n\n本文：\n{body}"}
         ]
     )
     return response.choices[0].message.content
