@@ -691,6 +691,10 @@ def check_and_reply():
                 print("自分自身からのメールのためスキップ")
                 continue
 
+            if not sender_email.endswith(f"@{WORK_EMAIL_DOMAIN}"):
+                print(f"組合外ドメインのためスキップ: {sender_email}")
+                continue
+
             # 組合メール一括登録
             if "組合メール一括登録" in subject:
                 csv_content = get_csv_attachment(msg)
