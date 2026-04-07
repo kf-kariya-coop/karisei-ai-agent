@@ -568,8 +568,8 @@ def send_license_reminders():
         print(f"免許更新チェックエラー：{e}")
 
 
-def search_regulations(query, limit=3):
-    """就業規則等から関連する条文を検索する"""
+def search_regulations(query, limit=8):
+    """就業規則等から関連する条文を検索する（隣接チャンクも取得）"""
     try:
         print(f"規定検索開始：{query[:50]}")
         response = client.embeddings.create(
@@ -587,8 +587,34 @@ def search_regulations(query, limit=3):
         print(f"検索結果：{len(result.data)}件")
         for i, r in enumerate(result.data):
             print(f"  [{i+1}] {r['doc_name']} chunk{r.get('chunk_index','?')} (sim:{r.get('similarity',0):.3f}): {r['content'][:80]}")
-        if result.data:
-            return result.data
+
+        if not result.data:
+            return []
+
+        # 隣接チャンク（前後1つ）も取得してコンテキストを補完
+        seen_ids = {r['id'] for r in result.data}
+        extra_chunks = []
+        for r in result.data:
+            chunk_idx = r.get('chunk_index')
+            if chunk_idx is None:
+                continue
+            for offset in [-1, 1]:
+                target_idx = chunk_idx + offset
+                if target_idx < 0:
+                    continue
+                neighbor = supabase.table("regulations").select(
+                    "id, doc_name, category, chunk_index, content"
+                ).eq("doc_name", r['doc_name']).eq("chunk_index", target_idx).execute()
+                if neighbor.data and neighbor.data[0]['id'] not in seen_ids:
+                    extra_chunks.append(neighbor.data[0])
+                    seen_ids.add(neighbor.data[0]['id'])
+
+        all_results = result.data + extra_chunks
+        # doc_nameとchunk_index順に並べ替えてコンテキストを整理
+        all_results.sort(key=lambda x: (x['doc_name'], x.get('chunk_index') or 0))
+        print(f"隣接チャンク込み合計：{len(all_results)}件")
+        return all_results
+
     except Exception as e:
         print(f"規定検索エラー：{e}")
     return []
@@ -607,7 +633,7 @@ def generate_reply(sender_name, subject, body):
         is_garbled = body and not any('\u3040' <= c <= '\u9fff' for c in body[:100])
         search_query = subject if is_garbled else f"{subject} {body}"
         print(f"検索クエリ：{search_query[:80]}")
-        results = search_regulations(search_query, limit=8)
+        results = search_regulations(search_query)
         if results:
             context = "\n\n【以下は就業規則データベースから検索した関連条文です。必ずこの内容を根拠として回答してください】\n"
             for r in results:
