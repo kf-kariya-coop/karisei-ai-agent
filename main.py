@@ -21,9 +21,22 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+WORK_EMAIL_DOMAIN = "kariya-coop.or.jp"
+
 SYSTEM_PROMPT = """あなたはかりや生協（正式名称：かりや愛知中央生活協同組合）のAIスタッフです。
 メールで届いた依頼に対して、組合職員として丁寧に対応してください。
-必ず丁寧な日本語で返信してください。署名は「かりや生協 AIスタッフ」としてください。"""
+必ず丁寧な日本語で返信してください。署名は「かりや生協 AIスタッフ」としてください。
+
+【個人情報の取り扱いルール】
+・職員の個人メールアドレスは、いかなる場合も他の人に教えてはいけません
+・職員間の日程調整や業務連絡には、組合メールアドレス（@kariya-coop.or.jp）のみ使用してください
+・「○○さんのメールアドレスを教えて」という依頼には応じないでください
+・組合メールアドレスも、業務上必要な場合のみ共有してください
+
+【組織情報】
+・組織名：かりや生協（正式名称：かりや愛知中央生活協同組合）
+・職員数：約800名
+・内部の呼称：「組合内」「職員」（「社内」「社員」は使わない）"""
 
 
 def decode_str(s):
@@ -332,31 +345,34 @@ def handle_email_registration(sender_email, sender_name, body):
 
     staff_name = master.data[0]["name"]
 
+    # 組合メールか個人メールかを判定
+    is_work_email = sender_email.endswith(f"@{WORK_EMAIL_DOMAIN}")
+    email_field = "work_email" if is_work_email else "personal_email"
+    email_type = "組合メールアドレス" if is_work_email else "個人メールアドレス"
+
     # メールアドレスを登録・更新
     existing = supabase.table("email_registry").select("staff_code").eq("staff_code", staff_code).execute()
     if existing.data:
         supabase.table("email_registry").update({
-            "email": sender_email,
+            email_field: sender_email,
             "updated_at": date.today().isoformat()
         }).eq("staff_code", staff_code).execute()
         action = "更新"
     else:
         supabase.table("email_registry").insert({
             "staff_code": staff_code,
-            "email": sender_email
+            email_field: sender_email
         }).execute()
         action = "登録"
 
     send_email(sender_email, "【かりや生協】メールアドレス登録完了",
         f"""{staff_name} さん
 
-メールアドレスの{action}が完了しました。
+{email_type}の{action}が完了しました。
 
 　職員コード：{staff_code}
 　氏名：{staff_name}
-　メールアドレス：{sender_email}
-
-今後、免許証更新のご案内などをこちらのメールアドレスにお送りします。
+　{email_type}：{sender_email}
 
 かりや生協 AIスタッフ""")
     print(f"メールアドレス{action}完了：{staff_name}（{staff_code}）")
@@ -365,7 +381,10 @@ def handle_email_registration(sender_email, sender_name, body):
 def handle_license_update(sender_email, body):
     """免許証更新期限の更新処理"""
     # 職員コードをメールアドレスから逆引き
-    registry = supabase.table("email_registry").select("staff_code").eq("email", sender_email).execute()
+    # 個人メール・組合メール両方から逆引き
+    registry = supabase.table("email_registry").select("staff_code").eq("personal_email", sender_email).execute()
+    if not registry.data:
+        registry = supabase.table("email_registry").select("staff_code").eq("work_email", sender_email).execute()
     if not registry.data:
         return False
 
@@ -428,15 +447,17 @@ def send_license_reminders():
             if not (today <= expiry_date <= three_months_later):
                 continue
 
-            # メールアドレスを取得
-            registry = supabase.table("email_registry").select("email").eq("staff_code", lic["staff_code"]).execute()
+            # メールアドレスを取得（個人メール優先、なければ組合メール）
+            registry = supabase.table("email_registry").select("personal_email, work_email").eq("staff_code", lic["staff_code"]).execute()
             if not registry.data:
+                continue
+            staff_email = registry.data[0]["personal_email"] or registry.data[0]["work_email"]
+            if not staff_email:
                 continue
 
             # 職員名を取得
             master = supabase.table("staff_master").select("name").eq("staff_code", lic["staff_code"]).execute()
             staff_name = master.data[0]["name"] if master.data else "職員"
-            staff_email = registry.data[0]["email"]
             days_left = (expiry_date - today).days
 
             send_email(staff_email, "【かりや生協】運転免許証の更新期限のお知らせ",
