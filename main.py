@@ -599,17 +599,25 @@ def generate_reply(sender_name, subject, body):
     needs_rag = any(kw in body or kw in subject for kw in regulation_keywords)
 
     context = ""
+    rag_instruction = ""
     if needs_rag:
-        results = search_regulations(body)
+        search_query = body if len(body) > 10 else subject
+        results = search_regulations(search_query)
         if results:
-            context = "\n\n【参考：就業規則等の関連条文】\n"
+            context = "\n\n【参照：就業規則等の関連条文（データベースより取得）】\n"
             for r in results:
-                context += f"\n＜{r['doc_name']}＞\n{r['content']}\n"
+                context += f"\n＜出典：{r['doc_name']}＞\n{r['content']}\n"
+            rag_instruction = """
+【重要な回答ルール】
+上記の「参照：就業規則等の関連条文」を必ず参照して回答してください。
+・条文の内容を具体的に引用し、「○○就業規則 第○条」のように出典を明記してください
+・条文に記載されていない内容は「就業規則には記載がありません」と答え、推測で回答しないでください
+・「一般的には」「通常は」などの曖昧な表現は使わないでください"""
 
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT + rag_instruction},
             {"role": "user", "content": f"送信者：{sender_name}\n件名：{subject}\n\n本文：\n{body}{context}"}
         ]
     )
