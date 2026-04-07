@@ -601,8 +601,11 @@ def generate_reply(sender_name, subject, body):
     context = ""
     rag_instruction = ""
     if needs_rag:
-        search_query = body if len(body) > 10 else subject
-        results = search_regulations(search_query)
+        # 本文が文字化けしている場合は件名を優先して検索
+        is_garbled = body and not any('\u3000' <= c <= '\u9fff' for c in body[:100])
+        search_query = subject if is_garbled else f"{subject} {body}"
+        print(f"検索クエリ：{search_query[:80]}")
+        results = search_regulations(search_query, limit=5)
         if results:
             context = "\n\n【参照：就業規則等の関連条文（データベースより取得）】\n"
             for r in results:
