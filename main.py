@@ -213,6 +213,75 @@ def handle_staff_master_import(sender_email, csv_content):
         print(f"職員マスタインポートエラー：{e}")
 
 
+def handle_work_email_import(sender_email, csv_content):
+    """組合メールアドレスをCSVから一括登録する"""
+    try:
+        reader = csv.reader(io.StringIO(csv_content))
+        rows = list(reader)
+
+        if not rows:
+            send_email(sender_email, "【かりや生協】組合メール一括登録 - エラー",
+                "CSVファイルが空です。確認してください。\n\nかりや生協 AIスタッフ")
+            return
+
+        # ヘッダー判定
+        first_row = rows[0]
+        start_index = 1 if any(h in first_row for h in ["職員コード", "社員CD", "社員No", "メール"]) else 0
+
+        inserted = 0
+        updated = 0
+        skipped = 0
+
+        for row in rows[start_index:]:
+            if len(row) < 2:
+                continue
+            try:
+                staff_code_raw = str(row[0]).strip()
+                work_email = str(row[1]).strip()
+
+                if not staff_code_raw.isdigit() or not work_email or "@" not in work_email:
+                    skipped += 1
+                    continue
+
+                staff_code = int(staff_code_raw)
+
+                existing = supabase.table("email_registry").select("staff_code").eq("staff_code", staff_code).execute()
+                if existing.data:
+                    supabase.table("email_registry").update({
+                        "work_email": work_email,
+                        "updated_at": date.today().isoformat()
+                    }).eq("staff_code", staff_code).execute()
+                    updated += 1
+                else:
+                    supabase.table("email_registry").insert({
+                        "staff_code": staff_code,
+                        "work_email": work_email
+                    }).execute()
+                    inserted += 1
+
+            except Exception as e:
+                skipped += 1
+                print(f"組合メール登録エラー：{e}")
+
+        send_email(sender_email, "【かりや生協】組合メール一括登録 完了",
+            f"""組合メールアドレスの一括登録が完了しました。
+
+　新規登録：{inserted}名
+　更新：{updated}名
+　スキップ：{skipped}件
+
+更新日：{date.today().strftime('%Y年%m月%d日')}
+
+かりや生協 AIスタッフ""")
+
+        print(f"組合メール一括登録完了：新規{inserted}名、更新{updated}名")
+
+    except Exception as e:
+        send_email(sender_email, "【かりや生協】組合メール一括登録 - エラー",
+            f"インポート中にエラーが発生しました。\n\nエラー内容：{e}\n\nかりや生協 AIスタッフ")
+        print(f"組合メール一括登録エラー：{e}")
+
+
 def handle_license_import(sender_email, csv_content):
     """免許証データCSVをインポートする"""
     try:
@@ -532,6 +601,16 @@ def check_and_reply():
 
             if sender_email == GMAIL_ADDRESS:
                 print("自分自身からのメールのためスキップ")
+                continue
+
+            # 組合メール一括登録
+            if "組合メール一括登録" in subject:
+                csv_content = get_csv_attachment(msg)
+                if csv_content:
+                    handle_work_email_import(sender_email, csv_content)
+                else:
+                    send_email(sender_email, "【かりや生協】組合メール一括登録 - CSVが見つかりません",
+                        "CSVファイルが添付されていません。\nCSVファイルを添付して再送してください。\n\nかりや生協 AIスタッフ")
                 continue
 
             # 免許証データ更新
