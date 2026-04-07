@@ -607,7 +607,7 @@ def generate_reply(sender_name, subject, body):
         is_garbled = body and not any('\u3040' <= c <= '\u9fff' for c in body[:100])
         search_query = subject if is_garbled else f"{subject} {body}"
         print(f"検索クエリ：{search_query[:80]}")
-        results = search_regulations(search_query, limit=5)
+        results = search_regulations(search_query, limit=8)
         if results:
             context = "\n\n【以下は就業規則データベースから検索した関連条文です。必ずこの内容を根拠として回答してください】\n"
             for r in results:
