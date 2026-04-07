@@ -83,7 +83,7 @@ def get_email_body(msg):
 
 def send_email(to_address, subject, body):
     msg = MIMEMultipart()
-    msg["From"] = GMAIL_ADDRESS
+    msg["From"] = f"かりや生協 AIスタッフ <{GMAIL_ADDRESS}>"
     msg["To"] = to_address
     msg["Subject"] = subject
     msg.attach(MIMEText(body, "plain", "utf-8"))
