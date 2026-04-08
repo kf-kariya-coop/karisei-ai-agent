@@ -566,7 +566,12 @@ def handle_email_lookup(sender_email, sender_name, subject, body):
 
     lines = []
     for r in found_results:
-        org = " ".join(filter(None, [r["department"], r["section"], r["workplace_name"], r["position_title"]]))
+        # 重複する組織名を除外（一方が他方の部分文字列の場合は長い方を優先）
+        org_parts = [r["department"], r["section"], r["workplace_name"], r["position_title"]]
+        org_parts = [p for p in org_parts if p]
+        org_parts = [p for i, p in enumerate(org_parts)
+                     if not any(p != q and p in q for q in org_parts)]
+        org = " ".join(org_parts)
         email_str = r["work_email"] if r["work_email"] else "（未登録）"
         lines.append(f"　{r['name']}　{org}\n　組合メール：{email_str}")
 
