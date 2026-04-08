@@ -469,52 +469,74 @@ def handle_email_registration(sender_email, sender_name, body):
     print(f"メールアドレス{action}完了：{staff_name}（{staff_code}）")
 
 
-def handle_email_lookup(sender_email, sender_name, body):
+def handle_email_lookup(sender_email, sender_name, subject, body):
     """職員の組合メールアドレスを名前で検索して回答する"""
-    # 「○○のメールアドレスを教えて」などのパターンを検出
-    pattern = re.search(r'([^\s　、。「」\d]{2,10})[さんのメールアドレスを教|のメール|の連絡先]', body)
-    if not pattern:
-        # より広いパターンで再検索
-        keywords = ["メールアドレスを教えて", "メールアドレスは", "メールを教えて", "連絡先を教えて"]
-        if not any(kw in body for kw in keywords):
-            return False
+    keywords = ["メールアドレスを教えて", "メールアドレスは", "メールを教えて", "連絡先を教えて"]
+    if not any(kw in body for kw in keywords):
+        return False
 
-    # 本文全体から人名を抽出してマスタ検索
-    # staffテーブルをLIKE検索して候補を絞る
-    search_names = re.findall(r'([^\s　、。「」【】\d]{2,6})[さ課長部長係長主任]', body)
-    if not search_names:
-        search_names = re.findall(r'([^\s　、。「」【】\d]{2,6})(?=のメール|のアドレス|の連絡先)', body)
+    reply_subject = f"Re: {subject}" if not subject.startswith("Re:") else subject
+    quoted = f"\n\n---\n{sender_name} さんのメール：\n" + "".join(f"> {l}\n" for l in body.strip().splitlines())
 
-    if not search_names:
+    # 人名を抽出（役職・「さん」の直前にある漢字2〜4文字）
+    name_candidates = re.findall(r'([\u4e00-\u9fff]{2,4})(?:さん|課長|部長|係長|主任|担当|さんの)', body)
+    if not name_candidates:
+        name_candidates = re.findall(r'([\u4e00-\u9fff]{2,4})の?(?:メール|連絡先|アドレス)', body)
+
+    # 部署名を抽出（○○課、○○部）
+    dept_candidates = re.findall(r'([\u4e00-\u9fff]{2,6})[課部係]', body)
+
+    if not name_candidates and not dept_candidates:
         return False
 
     found_results = []
-    for name in search_names:
+    seen_codes = set()
+
+    # 名前で検索
+    for name in name_candidates:
         result = supabase.table("staff_master").select(
             "staff_code, name, department, section, position_title"
         ).like("name", f"%{name}%").eq("is_active", True).execute()
-
         for staff in result.data:
-            reg = supabase.table("email_registry").select("work_email").eq(
-                "staff_code", staff["staff_code"]
-            ).execute()
-            work_email = reg.data[0]["work_email"] if reg.data else None
+            if staff["staff_code"] in seen_codes:
+                continue
+            seen_codes.add(staff["staff_code"])
+            reg = supabase.table("email_registry").select("work_email").eq("staff_code", staff["staff_code"]).execute()
             found_results.append({
                 "name": staff["name"],
                 "department": staff.get("department", ""),
                 "section": staff.get("section", ""),
                 "position_title": staff.get("position_title", ""),
-                "work_email": work_email
+                "work_email": reg.data[0]["work_email"] if reg.data else None
             })
 
+    # 名前で見つからない場合は部署名で検索
+    if not found_results and dept_candidates:
+        for dept in dept_candidates:
+            result = supabase.table("staff_master").select(
+                "staff_code, name, department, section, position_title"
+            ).or_(f"section.like.%{dept}%,department.like.%{dept}%").eq("is_active", True).execute()
+            for staff in result.data:
+                if staff["staff_code"] in seen_codes:
+                    continue
+                seen_codes.add(staff["staff_code"])
+                reg = supabase.table("email_registry").select("work_email").eq("staff_code", staff["staff_code"]).execute()
+                found_results.append({
+                    "name": staff["name"],
+                    "department": staff.get("department", ""),
+                    "section": staff.get("section", ""),
+                    "position_title": staff.get("position_title", ""),
+                    "work_email": reg.data[0]["work_email"] if reg.data else None
+                })
+
     if not found_results:
-        send_email(sender_email, "【かりや生協】メールアドレス照会",
-            f"""{sender_name} さん
+        send_email(sender_email, reply_subject,
+            f"""お疲れさまです。
 
 お問い合わせいただきましたが、該当する職員が見つかりませんでした。
 氏名をフルネームでお試しください。
 
-かりや生協 AIスタッフ""")
+かりや生協 AIスタッフ""" + quoted)
         return True
 
     lines = []
@@ -523,16 +545,16 @@ def handle_email_lookup(sender_email, sender_name, body):
         email_str = r["work_email"] if r["work_email"] else "（未登録）"
         lines.append(f"　{r['name']}　{org}\n　組合メール：{email_str}")
 
-    send_email(sender_email, "【かりや生協】メールアドレス照会結果",
-        f"""{sender_name} さん
+    send_email(sender_email, reply_subject,
+        f"""お疲れさまです。
 
 お問い合わせの職員情報です。
 
-{"　" + chr(10) + "　".join(lines) if len(found_results) == 1 else chr(10).join(lines)}
+{chr(10).join(lines)}
 
 ※個人メールアドレスはお答えできません。
 
-かりや生協 AIスタッフ""")
+かりや生協 AIスタッフ""" + quoted)
     print(f"メールアドレス照会：{[r['name'] for r in found_results]}")
     return True
 
@@ -811,7 +833,7 @@ def check_and_reply():
 
             # メールアドレス照会
             if any(kw in body for kw in ["メールアドレスを教えて", "メールを教えて", "連絡先を教えて", "メールアドレスは"]):
-                if handle_email_lookup(sender_email, sender_name, body):
+                if handle_email_lookup(sender_email, sender_name, subject, body):
                     continue
 
             # 免許証更新報告
