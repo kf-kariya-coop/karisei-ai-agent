@@ -478,14 +478,15 @@ def handle_email_lookup(sender_email, sender_name, subject, body):
     reply_subject = f"Re: {subject}" if not subject.startswith("Re:") else subject
     quoted = f"\n\n---\n{sender_name} さんのメール：\n" + "".join(f"> {l}\n" for l in body.strip().splitlines())
 
-    # 人名抽出（役職・さんの直前にある漢字2〜4文字）
-    name_candidates = re.findall(r'([\u4e00-\u9fff]{2,4})(?:さん|課長|部長|係長|主任|担当|さんの)', body)
+    # 人名抽出（役職・さん・君の直前にある漢字2〜4文字）
+    name_candidates = re.findall(r'([\u4e00-\u9fff]{2,4})(?:さん|君|くん|課長|部長|係長|主任|担当|さんの|君の)', body)
     if not name_candidates:
         name_candidates = re.findall(r'([\u4e00-\u9fff]{2,4})の?(?:メール|連絡先|アドレス)', body)
 
-    # 部署名抽出（人名と重複するものは除外）
-    dept_candidates = [d for d in re.findall(r'([\u4e00-\u9fff]{2,6})[課部係]', body)
-                       if d not in name_candidates]
+    # 部署名抽出（○○課/部/係 または 「の」の直前の漢字列、人名と重複するものは除外）
+    dept_by_suffix = re.findall(r'([\u4e00-\u9fff]{2,6})[課部係]', body)
+    dept_by_no = re.findall(r'([\u4e00-\u9fff]{2,8})の(?:[\u4e00-\u9fff]{2,4})(?:さん|君|くん|課長|部長)', body)
+    dept_candidates = list({d for d in dept_by_suffix + dept_by_no if d not in name_candidates})
 
     # 役職抽出
     position_keywords = ["課長", "部長", "係長", "主任", "室長", "センター長"]
