@@ -489,15 +489,16 @@ def handle_email_lookup(sender_email, sender_name, subject, body):
     if not name_candidates and not dept_candidates:
         return False
 
+    # 役職を抽出
+    position_keywords = ["課長", "部長", "係長", "主任", "担当", "室長", "センター長"]
+    position_hit = [p for p in position_keywords if p in body]
+
     found_results = []
     seen_codes = set()
 
-    # 名前で検索
-    for name in name_candidates:
-        result = supabase.table("staff_master").select(
-            "staff_code, name, department, section, position_title"
-        ).like("name", f"%{name}%").eq("is_active", True).execute()
-        for staff in result.data:
+    def fetch_staff(query):
+        """検索結果をfound_resultsに追加"""
+        for staff in query.execute().data:
             if staff["staff_code"] in seen_codes:
                 continue
             seen_codes.add(staff["staff_code"])
@@ -510,24 +511,44 @@ def handle_email_lookup(sender_email, sender_name, subject, body):
                 "work_email": reg.data[0]["work_email"] if reg.data else None
             })
 
-    # 名前で見つからない場合は部署名で検索
+    # 名前で検索（部署・役職も組み合わせて段階的に絞り込む）
+    for name in name_candidates:
+        base = supabase.table("staff_master").select(
+            "staff_code, name, department, section, position_title"
+        ).like("name", f"%{name}%").eq("is_active", True)
+
+        # 部署＋役職で絞り込み
+        if dept_candidates and position_hit:
+            for dept in dept_candidates:
+                for pos in position_hit:
+                    q = base.or_(f"section.like.%{dept}%,department.like.%{dept}%").like("position_title", f"%{pos}%")
+                    fetch_staff(q)
+
+        # 部署のみで絞り込み
+        if not found_results and dept_candidates:
+            for dept in dept_candidates:
+                fetch_staff(base.or_(f"section.like.%{dept}%,department.like.%{dept}%"))
+
+        # 役職のみで絞り込み
+        if not found_results and position_hit:
+            for pos in position_hit:
+                fetch_staff(base.like("position_title", f"%{pos}%"))
+
+        # 絞り込みなし（名前のみ）
+        if not found_results:
+            fetch_staff(base)
+
+    # 名前で見つからない場合は部署名＋役職で検索
     if not found_results and dept_candidates:
         for dept in dept_candidates:
-            result = supabase.table("staff_master").select(
+            base = supabase.table("staff_master").select(
                 "staff_code, name, department, section, position_title"
-            ).or_(f"section.like.%{dept}%,department.like.%{dept}%").eq("is_active", True).execute()
-            for staff in result.data:
-                if staff["staff_code"] in seen_codes:
-                    continue
-                seen_codes.add(staff["staff_code"])
-                reg = supabase.table("email_registry").select("work_email").eq("staff_code", staff["staff_code"]).execute()
-                found_results.append({
-                    "name": staff["name"],
-                    "department": staff.get("department", ""),
-                    "section": staff.get("section", ""),
-                    "position_title": staff.get("position_title", ""),
-                    "work_email": reg.data[0]["work_email"] if reg.data else None
-                })
+            ).or_(f"section.like.%{dept}%,department.like.%{dept}%").eq("is_active", True)
+            if position_hit:
+                for pos in position_hit:
+                    fetch_staff(base.like("position_title", f"%{pos}%"))
+            else:
+                fetch_staff(base)
 
     if not found_results:
         send_email(sender_email, reply_subject,
