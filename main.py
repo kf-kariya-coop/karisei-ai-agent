@@ -497,12 +497,12 @@ def handle_email_lookup(sender_email, sender_name, subject, body):
     def do_search(name=None, dept=None, position=None):
         """毎回フレッシュなクエリを生成して検索"""
         q = supabase.table("staff_master").select(
-            "staff_code, name, department, section, position_title"
+            "staff_code, name, department, section, workplace_name, position_title"
         ).eq("is_active", True)
         if name:
             q = q.like("name", f"%{name}%")
         if dept:
-            q = q.or_(f"section.like.%{dept}%,department.like.%{dept}%")
+            q = q.or_(f"section.like.%{dept}%,department.like.%{dept}%,workplace_name.like.%{dept}%")
         if position:
             q = q.like("position_title", f"%{position}%")
         return q.execute().data
@@ -522,6 +522,7 @@ def handle_email_lookup(sender_email, sender_name, subject, body):
                 "name": staff["name"],
                 "department": staff.get("department", ""),
                 "section": staff.get("section", ""),
+                "workplace_name": staff.get("workplace_name", ""),
                 "position_title": staff.get("position_title", ""),
                 "work_email": reg.data[0]["work_email"] if reg.data else None
             })
@@ -564,7 +565,7 @@ def handle_email_lookup(sender_email, sender_name, subject, body):
 
     lines = []
     for r in found_results:
-        org = " ".join(filter(None, [r["department"], r["section"], r["position_title"]]))
+        org = " ".join(filter(None, [r["department"], r["section"], r["workplace_name"], r["position_title"]]))
         email_str = r["work_email"] if r["work_email"] else "（未登録）"
         lines.append(f"　{r['name']}　{org}\n　組合メール：{email_str}")
 
